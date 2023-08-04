@@ -122,9 +122,40 @@ void vApplicationTickHook(void);
 /*-----------------------------------------------------------*/
 TaskHandle_t data_reader_handle;
 TaskHandle_t processing_handle;
-TaskHandle_t cli_handle;
+TaskHandle_t cli_listener_handle;
 
-QueueHandle_t queue_handle;
+#define PROCESSING_QUEUE_SIZE 30
+QueueHandle_t processing_queue_handle;
+
+typedef void (*cli_handler_t)(void *);
+
+#define MAX_COMMAND_LENGTH 31
+#define MAX_COMMAND_COUNT 10
+int command_count = 0;
+
+typedef struct
+{
+    char *cmd;
+    cli_handler_t handler;
+} cli_cmd_t;
+
+cli_cmd_t commands[MAX_COMMAND_COUNT];
+
+TimerHandle_t main_timer;
+float main_timer_time;
+
+void main_timer_callback(TimerHandle_t xTimer)
+{
+    main_timer_time += (0.001f);
+}
+
+void main_timer_init()
+{
+    if (NULL == (main_timer = xTimerCreate("timer", pdMS_TO_TICKS(1), pdTRUE, 0, main_timer_callback)))
+    {
+        LOG(ERR, "Couldn't create a timer.");
+    }
+}
 
 /// @brief This task prints a file line by line.
 /// @param pvParameters file path string.
@@ -138,20 +169,20 @@ void data_reader_task(void *pvParameters)
         exit(EXIT_FAILURE);
     }
 
-    LOG(DBG, "Creating a new queue.");
-    if (NULL == (queue_handle = xQueueCreate(10, sizeof(int))))
+    LOG(DBG, "Creating a new processing queue.");
+    if (NULL == (processing_queue_handle = xQueueCreate(PROCESSING_QUEUE_SIZE, sizeof(int))))
     {
-        LOG(ERR, "Failed to create a queue.");
+        LOG(ERR, "Failed to create a processing queue.");
         exit(EXIT_FAILURE);
     }
-    LOG(DBG, "Queue created.");
+    LOG(DBG, "Processing queue created.");
 
     LOG(INF, "Reading file: %s", filename);
     int num;
     while (1 == fscanf(file, "%d", &num))
     {
         LOG(INF, "Sending %d to the queue.", num);
-        xQueueSend(queue_handle, &num, pdMS_TO_TICKS(1000));
+        xQueueSend(processing_queue_handle, &num, pdMS_TO_TICKS(1000));
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
     LOG(INF, "Closing file: %s", filename);
@@ -164,9 +195,9 @@ void processing_task(void *pvParameters)
     int buffer, sum = 0, count = 0;
     while (1)
     {
-        if (NULL != queue_handle)
+        if (NULL != processing_queue_handle)
         {
-            if (pdTRUE == xQueueReceive(queue_handle, &buffer, pdMS_TO_TICKS(1000)))
+            if (pdTRUE == xQueueReceive(processing_queue_handle, &buffer, pdMS_TO_TICKS(1000)))
             {
                 LOG(INF, "Received %d from the queue.", buffer);
                 sum += buffer;
@@ -183,25 +214,97 @@ void processing_task(void *pvParameters)
     }
 }
 
-void cli_task(void *pvParameters)
+void cli_listener_task(void *pvParameters)
 {
+    char cmd[MAX_COMMAND_LENGTH];
+    while (1)
+    {
+        if (1 == scanf(" %30s", cmd))
+        {
+            for (int i = 0; i < command_count; i++)
+            {
+                if (0 == strcmp(commands[i].cmd, cmd))
+                {
+                    LOG(DBG, "Executing command: %s", cmd);
+                    commands[i].handler(NULL);
+                    strcpy(cmd, "");
+                    break;
+                }
+            }
+            if (strcmp(cmd, ""))
+                LOG(ERR, "%s is not a known command.", cmd);
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
 }
 
-int main(int argc, const char *argv[])
+void register_cmd(char *cmd, cli_handler_t handler)
 {
-    LOG_init();
-    if (argc == 2)
+    cli_cmd_t command = {cmd, handler};
+    // Register the command to be listened for.
+    if (command_count < MAX_COMMAND_COUNT)
     {
-        xTaskCreate(data_reader_task, "data_reader_task", configMINIMAL_STACK_SIZE, (void *)argv[1], mainCHECK_TASK_PRIORITY, &data_reader_handle);
-        xTaskCreate(processing_task, "processing_task", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY, &processing_handle);
+        commands[command_count++] = command;
     }
     else
     {
-        char *filepath = "/gl/freertos-intro/data.csv";
-        xTaskCreate(data_reader_task, "data_reader_task", configMINIMAL_STACK_SIZE, (void *)filepath, mainCHECK_TASK_PRIORITY, &data_reader_handle);
-        xTaskCreate(processing_handle, "processing_task", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY, &processing_handle);
-        return -1;
+        LOG(ERR, "Can't register this command - too many commands - expand the command array");
     }
+}
+
+void test_handler(void *arg)
+{
+    LOG(INF, "Test scuccessfull");
+}
+
+void exit_handler(void *arg)
+{
+    LOG(WRN, "Exiting program");
+    exit(EXIT_SUCCESS);
+}
+
+void timer_start(void *arg)
+{
+    LOG(DBG, "Starting the main timer.");
+    xTimerStart(main_timer, 0);
+}
+
+void timer_stop(void *arg)
+{
+    xTimerStop(main_timer, 0);
+    LOG(DBG, "Stopping the main timer at: %f", main_timer_time);
+}
+
+void stop_processing(void *arg)
+{
+    LOG(WRN, "Suspending processing task");
+    vTaskSuspend(processing_handle);
+}
+
+void resume_processing(void *arg)
+{
+    LOG(WRN, "Resuming processing task");
+    vTaskResume(processing_handle);
+}
+
+int main(int argc, char *argv[])
+{
+    LOG_init();
+    main_timer_init();
+    register_cmd("test", test_handler);
+    register_cmd("exit", exit_handler);
+    register_cmd("timer_start", timer_start);
+    register_cmd("timer_stop", timer_stop);
+    register_cmd("stop_processing", stop_processing);
+    register_cmd("restart_processing", resume_processing);
+
+    xTaskCreate(cli_listener_task, "cli_listener_task", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY, &cli_listener_handle);
+    char *filepath = "/gl/freertos-intro/data.csv";
+    if (argc == 2)
+        filepath = argv[1];
+    xTaskCreate(data_reader_task, "data_reader_task", configMINIMAL_STACK_SIZE, (void *)filepath, mainCHECK_TASK_PRIORITY, &data_reader_handle);
+    xTaskCreate(processing_task, "processing_task", configMINIMAL_STACK_SIZE, NULL, mainCHECK_TASK_PRIORITY, &processing_handle);
+
     vTaskStartScheduler();
 
     /* Should never get here unless there was not enough heap space to create

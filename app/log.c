@@ -3,18 +3,18 @@
 TimerHandle_t log_timer;
 float log_time;
 
+void log_timer_callback(TimerHandle_t xTimer)
+{
+    log_time += (0.001f);
+}
+
 void LOG_init()
 {
-    if (NULL == (log_timer = xTimerCreate("timer", pdMS_TO_TICKS(1), pdTRUE, 0, vTimerCallback)))
+    if (NULL == (log_timer = xTimerCreate("timer", pdMS_TO_TICKS(1), pdTRUE, 0, log_timer_callback)))
     {
         LOG(ERR, "Couldn't create a timer.");
     }
     xTimerStart(log_timer, 0);
-}
-
-void vTimerCallback(TimerHandle_t xTimer)
-{
-    log_time += (0.001f);
 }
 
 void LOG(log_t type, const char *format, ...)
