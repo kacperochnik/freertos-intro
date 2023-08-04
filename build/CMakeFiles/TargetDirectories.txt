@@ -1,3 +1,0 @@
-/gl/freertos-intro/build/CMakeFiles/app.dir
-/gl/freertos-intro/build/CMakeFiles/edit_cache.dir
-/gl/freertos-intro/build/CMakeFiles/rebuild_cache.dir
