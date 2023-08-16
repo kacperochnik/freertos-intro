@@ -35,4 +35,4 @@ find_package(eclipse-paho-mqtt-c REQUIRED)
 
 add_executable(app ${SOURCE_FILES} ${PORTABLE_FILES} ${APP_FILES})
 
-target_link_libraries(app eclipse-paho-mqtt-c::paho-mqtt3a) 
+target_link_libraries(app eclipse-paho-mqtt-c::paho-mqtt3c) 
