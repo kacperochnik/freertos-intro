@@ -1,5 +1,5 @@
-#ifndef APP_INCLUDE_LOG_H
-#define APP_INCLUDE_LOG_H
+#ifndef LOG_H
+#define LOG_H
 
 #include <stdio.h>
 #include <stdarg.h>

@@ -89,6 +89,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "log.h"
+#include "mymqttclient.h"
 #include <string.h>
 
 #include "FreeRTOS.h"
@@ -149,6 +150,7 @@ void main_timer_callback(TimerHandle_t xTimer)
     main_timer_time += (0.001f);
 }
 
+/// @brief initialize main timer
 void main_timer_init()
 {
     if (NULL == (main_timer = xTimerCreate("timer", pdMS_TO_TICKS(1), pdTRUE, 0, main_timer_callback)))
@@ -161,6 +163,7 @@ void main_timer_init()
 /// @param pvParameters file path string.
 void data_reader_task(void *pvParameters)
 {
+    //mqtt_init_client();
     const char *filename = (const char *)pvParameters;
     FILE *file;
     if (NULL == (file = fopen(filename, "r")))
@@ -182,31 +185,43 @@ void data_reader_task(void *pvParameters)
     while (1 == fscanf(file, "%d", &num))
     {
         LOG(INF, "Sending %d to the queue.", num);
-        xQueueSend(processing_queue_handle, &num, pdMS_TO_TICKS(1000));
+        xQueueSend(processing_queue_handle, &num, pdMS_TO_TICKS(100000));
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
     LOG(INF, "Closing file: %s", filename);
     fclose(file);
+
+    //mqtt_disconnect_client();
+
     vTaskSuspend(data_reader_handle);
 }
 
+/// @brief this task receives numbers from a que and checks if the sum of last 3 is > 200.
 void processing_task(void *pvParameters)
 {
-    int buffer, sum = 0, count = 0;
+    int buffer, sum = 0, count = 0, arr[3] = {0, 0, 0};
     while (1)
     {
         if (NULL != processing_queue_handle)
         {
-            if (pdTRUE == xQueueReceive(processing_queue_handle, &buffer, pdMS_TO_TICKS(1000)))
+            if (pdTRUE == xQueueReceive(processing_queue_handle, &buffer, pdMS_TO_TICKS(100000)))
             {
                 LOG(INF, "Received %d from the queue.", buffer);
-                sum += buffer;
-                if (2 == count)
+                arr[count] = buffer;
+                for (int i = 0; i < 3; i++)
                 {
-                    if (200 < sum)
-                        LOG(WRN, "Sum = %d is > 200.", sum);
-                    sum = 0;
+                    sum += arr[i];
                 }
+
+                if (200 < sum)
+                {
+                    char msg[100];
+                    sprintf(msg, "%d + %d + %d = %d > 200", arr[0], arr[1], arr[2], sum);
+                    LOG(WRN, "%s", msg);
+                    mqtt_publish_msg(msg);
+                }
+                sum = 0;
+
                 count = ++count % 3;
             }
         }
@@ -214,6 +229,8 @@ void processing_task(void *pvParameters)
     }
 }
 
+/// @brief this task listens for commands
+/// @param pvParameters
 void cli_listener_task(void *pvParameters)
 {
     char cmd[MAX_COMMAND_LENGTH];
@@ -238,6 +255,9 @@ void cli_listener_task(void *pvParameters)
     }
 }
 
+/// @brief register a new command and link it with a handler
+/// @param cmd command name string
+/// @param handler handler of the command
 void register_cmd(char *cmd, cli_handler_t handler)
 {
     cli_cmd_t command = {cmd, handler};
@@ -260,6 +280,7 @@ void test_handler(void *arg)
 void exit_handler(void *arg)
 {
     LOG(WRN, "Exiting program");
+
     exit(EXIT_SUCCESS);
 }
 
@@ -291,6 +312,7 @@ int main(int argc, char *argv[])
 {
     LOG_init();
     main_timer_init();
+
     register_cmd("test", test_handler);
     register_cmd("exit", exit_handler);
     register_cmd("timer_start", timer_start);

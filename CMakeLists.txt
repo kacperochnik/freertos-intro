@@ -31,4 +31,8 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pthread -DDEBUG=1 -g -UUSE_STDIO -D__GCC_PO
 set(CMAKE_DEBUG_POSTFIX d)
 set(CMAKE_BUILD_TYPE Debug)
 
+find_package(eclipse-paho-mqtt-c REQUIRED)
+
 add_executable(app ${SOURCE_FILES} ${PORTABLE_FILES} ${APP_FILES})
+
+target_link_libraries(app eclipse-paho-mqtt-c::paho-mqtt3a) 
